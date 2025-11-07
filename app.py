@@ -5,6 +5,7 @@ import matplotlib.pyplot as plt
 import streamlit as st
 import pandas as pd
 from datetime import datetime
+from io import BytesIO
 
 # =====================================================
 # Utility functions
@@ -126,64 +127,186 @@ with tab_sim:
 
         st.markdown("---")
 
-        # ======================
-        #  Figure 1: 动态演化
-        # ======================
-        fig, ax = plt.subplots()
-        ax.plot(bias_hist, label="Bias |True - Visible|", color="tab:blue", lw=2)
-        ax.plot(silence_hist, label="Silence Rate", color="tab:red", lw=2, linestyle="--")
-        ax.set_xlabel("Time step")
-        ax.set_ylabel("Value")
-        ax.set_title("Figure 1. Opinion Bias and Silence Rate over Time")
-        ax.legend()
-        ax.grid(alpha=0.3)
+        # ==============================
+        # Figure 1: 双轴动态演化图
+        # ==============================
+        fig, ax1 = plt.subplots(figsize=(7, 4))
+
+        # 左轴：Bias
+        color1 = "tab:blue"
+        ax1.set_xlabel("Time step")
+        ax1.set_ylabel("Bias |True - Visible|", color=color1)
+        ax1.plot(bias_hist, color=color1, lw=2, label="Bias |True - Visible|")
+        ax1.tick_params(axis="y", labelcolor=color1)
+        ax1.grid(alpha=0.3)
+
+        # 右轴：Silence Rate
+        ax2 = ax1.twinx()
+        color2 = "tab:red"
+        ax2.set_ylabel("Silence Rate", color=color2)
+        ax2.plot(silence_hist, color=color2, lw=2, linestyle="--", label="Silence Rate")
+        ax2.tick_params(axis="y", labelcolor=color2)
+
+        fig.suptitle("Figure 1. Opinion Bias (left) and Silence Rate (right) over Time", fontsize=12)
         st.pyplot(fig)
-        plt.close(fig)  # 避免Streamlit重复显示时内存堆积
+        plt.close(fig)
 
-        # ======================
-        #  Figure 2: 意见分布对比
-        # ======================
-        fig2, (ax21, ax22) = plt.subplots(1, 2, figsize=(10, 4))
+        # 保存为PNG并生成下载按钮
+        buf1 = BytesIO()
+        fig.savefig(buf1, format="png", dpi=300, bbox_inches="tight")
+        st.download_button(
+            label="Download Figure 1",
+            data=buf1.getvalue(),
+            file_name="figure1_bias_silence.png",
+            mime="image/png"
+        )
+        st.markdown("""
+        Figure 1 shows the temporal evolution of the opinion bias (blue) and the silence rate (red).
+        When both lines rise or stay high, most individuals remain silent while visible voices reinforce the majority view— the hallmark of the *Spiral of Silence* process.""")
 
-        # 真实意见分布
-        ax21.hist(o, bins=20, color="lightgray", edgecolor="black")
-        ax21.axvline(true_mean, color="tab:blue", linestyle="--", label=f"True Mean={true_mean:.2f}")
-        ax21.set_title("Figure 2a. True Opinion Distribution")
-        ax21.set_xlabel("Opinion value")
-        ax21.set_ylabel("Count")
-        ax21.legend()
+        # ==============================
+        # Figure 2: 意见分布 + KDE曲线 / 透明重叠
+        # ==============================
+        fig2, ax = plt.subplots(figsize=(7, 4))
 
-        # 发声者意见分布
+        # 使用透明度重叠的直方图
+        bins = np.linspace(-1, 1, 25)
+        ax.hist(o, bins=bins, color="lightgray", edgecolor="black", alpha=0.5, label="True Opinions")
         speak_idx = np.where(s == 1)[0]
         if len(speak_idx) > 0:
-            vis_mean = float(o[speak_idx].mean())
-            ax22.hist(o[speak_idx], bins=20, color="skyblue", edgecolor="black")
-            ax22.axvline(vis_mean, color="tab:orange", linestyle="--", label=f"Visible Mean={vis_mean:.2f}")
-            ax22.set_title("Figure 2b. Visible (Speaking) Opinion Distribution")
-            ax22.legend()
+            ax.hist(o[speak_idx], bins=bins, color="skyblue", edgecolor="black", alpha=0.6, label="Visible (Speaking)")
         else:
-            ax22.text(0.5, 0.5, "No one speaks", ha="center", va="center", fontsize=12)
-            ax22.set_title("Figure 2b. Visible Opinion Distribution")
+            ax.text(0, 0.5, "No one speaks", ha="center", va="center", fontsize=12)
 
-        plt.tight_layout()
+        # 叠加 KDE 曲线（平滑分布）
+        try:
+            from scipy.stats import gaussian_kde
+            xgrid = np.linspace(-1, 1, 200)
+            kde_true = gaussian_kde(o)
+            ax.plot(xgrid, kde_true(xgrid) * len(o) * (bins[1]-bins[0]),
+                    color="tab:blue", lw=2, label="True KDE")
+            if len(speak_idx) > 0:
+                kde_visible = gaussian_kde(o[speak_idx])
+                ax.plot(xgrid, kde_visible(xgrid) * len(o) * (bins[1]-bins[0]),
+                        color="tab:orange", lw=2, linestyle="--", label="Visible KDE")
+        except ImportError:
+            ax.text(0, 0.9, "Install scipy for KDE curves", ha="center", va="center", fontsize=10)
+
+        # 均值线
+        ax.axvline(o.mean(), color="tab:blue", linestyle="--", lw=1)
+        if len(speak_idx) > 0:
+            ax.axvline(o[speak_idx].mean(), color="tab:orange", linestyle="--", lw=1)
+
+        ax.set_xlabel("Opinion Value")
+        ax.set_ylabel("Count / Density")
+        ax.set_title("Figure 2. True vs Visible Opinion Distribution (with KDE)")
+        ax.legend()
         st.pyplot(fig2)
         plt.close(fig2)
 
-        # ======================
-        #  Figure 3: 网络可视化（节点颜色=发声状态）
-        # ======================
+        buf2 = BytesIO()
+        fig2.savefig(buf2, format="png", dpi=300, bbox_inches="tight")
+        st.download_button(
+            label="Download Figure 2",
+            data=buf2.getvalue(),
+            file_name="figure2_opinion_distribution.png",
+            mime="image/png"
+        )
+        st.markdown("""In Figure 2, Gray bars show the true opinion distribution, while colored KDE curves represent visible opinions.  
+If the visible layer is missing or skewed, it indicates latent diversity hidden beneath a homogeneous public front—  
+a quantitative signature of perceived consensus under social pressure.""")
+
+        # ==============================
+        # Figure 3: 网络中发声与沉默个体的状态图
+        # ==============================
         if N <= 300:
             st.markdown("**Figure 3. Final Network (blue = speaking, red = silent)**")
+
             fig3, ax3 = plt.subplots(figsize=(6, 6))
-            pos = nx.spring_layout(G, seed=seed)
+            pos = nx.spring_layout(G, seed=seed)          # 位置布局
             colors = ["tab:blue" if s[i] == 1 else "tab:red" for i in range(N)]
+
             nx.draw(
-                G, pos=pos, node_color=colors, node_size=30,
-                ax=ax3, with_labels=False, edge_color="lightgray"
+                G, pos=pos, node_color=colors, node_size=35,
+                edge_color="lightgray", with_labels=False, ax=ax3
             )
             ax3.set_title("Figure 3. Speaking vs Silent Agents in Network")
             st.pyplot(fig3)
+
+            # 下载按钮
+            buf3 = BytesIO()
+            fig3.savefig(buf3, format="png", dpi=300, bbox_inches="tight")
+            st.download_button(
+                label="Download Figure 3",
+                data=buf3.getvalue(),
+                file_name="figure3_network_state.png",
+                mime="image/png"
+            )
+
             plt.close(fig3)
+        else:
+            st.info("Network visualization skipped (too large N).")
+
+
+        st.markdown("""
+            In Figure 3,Blue nodes are speaking agents and red nodes are silent ones. An all-red network means that communication links exist but information flow has stopped,  
+    depicting a “frozen” opinion state caused by fear of isolation.""")    
+
+
+        # ==============================
+        # Figure 4: 参数扫描 —— 社会容忍度 vs 沉默率
+        # ==============================
+        import numpy as np
+        import matplotlib.pyplot as plt
+        from io import BytesIO
+
+        st.markdown("---")
+        st.subheader("📈 Figure 4. Silence Rate vs Social Tolerance")
+
+        # 参数扫描范围
+        tau_range = np.linspace(0.05, 0.6, 10)
+        media_bias_values = [0.0, 0.3, 0.6]  # 三种媒体偏向
+
+        fig4, ax4 = plt.subplots(figsize=(7, 4))
+
+        for mb in media_bias_values:
+            silence_rates = []
+            for tau_mid in tau_range:
+                tau_min = tau_mid * 0.7
+                tau_max = tau_mid * 1.3
+                tau_scan = rng.uniform(tau_min, tau_max, N)
+                res = run_simulation(N, G, o, tau_scan, mb, w_media, T, alpha_algo)
+                silence_rates.append(res["silence_hist"][-1])
+            ax4.plot(tau_range, silence_rates, marker="o", label=f"Media bias={mb:.1f}")
+
+        ax4.set_xlabel("Average Social Tolerance (τ)")
+        ax4.set_ylabel("Final Silence Rate")
+        ax4.set_title("Figure 4. Silence Rate vs Social Tolerance under Different Media Bias")
+        ax4.legend()
+        ax4.grid(alpha=0.3)
+        st.pyplot(fig4)
+
+        # 下载按钮
+        buf4 = BytesIO()
+        fig4.savefig(buf4, format="png", dpi=300, bbox_inches="tight")
+        st.download_button(
+            label="📥 Download Figure 4",
+            data=buf4.getvalue(),
+            file_name="figure4_silence_vs_tolerance.png",
+            mime="image/png"
+        )
+        plt.close(fig4)
+
+        st.markdown("""
+        Figure 4 shows how final silence rate depends on social tolerance (τ) under varying media bias.  
+        Higher tolerance reduces fear of isolation and encourages expression, leading to a lower silence rate.  
+        Stronger media bias pushes the whole curve upward—biased media amplify conformity pressure and deepen the spiral of silence.  
+
+        **Key Insight:**  
+        Social tolerance functions as a *release valve* for diversity of expression,  
+        while media bias acts as an *accelerator* of the silence spiral.
+        """)
+
     else:
         st.info("Adjust parameters and click 'Run Simulation' to start.")     
 
